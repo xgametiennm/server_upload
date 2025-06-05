@@ -1,0 +1,54 @@
+
+Triển khai Amazon S3 + CloudFront (Tóm tắt)
+
+1. Tạo S3 Bucket
+   - Truy cập AWS S3 > Create bucket
+   - Đặt tên bucket (ví dụ: my-cdn-bucket)
+   - Tắt "Block all public access" nếu muốn public file
+   - Upload file tĩnh vào bucket
+
+2. Bật Static Website Hosting cho bucket
+   - Vào bucket > Properties > Static website hosting > Enable
+   - Chọn "Host a static website"
+   - Nhập index document (vd: index.html)
+   - Ghi lại endpoint (http://my-cdn-bucket.s3-website-region.amazonaws.com)
+
+3. Cấu hình Policy cho public access (nếu cần)
+   - Gán bucket policy để cho phép public đọc file
+Public quyền truy cập file (Bucket Policy):
+
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AllowPublicRead",
+      "Effect": "Allow",
+      "Principal": "*",
+      "Action": "s3:GetObject",
+      "Resource": "arn:aws:s3:::my-cdn-bucket/*"
+    }
+  ]
+}
+
+
+4. Tạo CloudFront Distribution
+   - Truy cập CloudFront > Create Distribution
+   - Origin Domain: nhập endpoint static website S3 (không dùng s3.amazonaws.com)
+   - Origin Protocol Policy: HTTP Only
+   - Viewer Protocol Policy: Redirect HTTP to HTTPS
+   - (Tùy chọn) Thêm Alternate Domain Name (CNAME): cdn.example.com
+   - (Tùy chọn) Gắn SSL Certificate từ ACM (vùng us-east-1) nếu dùng HTTPS với domain tùy chỉnh
+
+5. Cấu hình DNS trên Cloudflare
+   - Vào domain > DNS > Thêm bản ghi CNAME:
+     - Name: cdn (hoặc subdomain bạn chọn)
+     - Target: dxxx.cloudfront.net
+     - Proxy status: DNS Only (xám)
+
+6. Truy cập file qua domain tùy chỉnh
+   - Ví dụ: https://cdn.example.com/image.png
+
+Ghi chú:
+- Nếu không gắn SSL cert, domain tùy chỉnh không dùng được HTTPS
+- CloudFront chỉ hỗ trợ cert ACM ở vùng us-east-1
+- Đừng bật proxy (Cloudflare ☁️ cam) nếu chưa có SSL hợp lệ

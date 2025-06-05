@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Upload File</title>
+    <style>
+      body {
+        font-family: "Segoe UI", Arial, sans-serif;
+        background: #f6f8fa;
+        margin: 0;
+        padding: 0;
+      }
+      .container {
+        max-width: 600px;
+        margin: 40px auto;
+        background: #fff;
+        border-radius: 12px;
+        box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+        padding: 32px 28px 24px 28px;
+      }
+      h2 {
+        text-align: center;
+        color: #2d3a4a;
+        margin-bottom: 24px;
+      }
+      label {
+        font-weight: 500;
+        color: #34495e;
+      }
+      input[type="text"],
+      input[type="file"] {
+        width: 100%;
+        padding: 10px;
+        margin-top: 6px;
+        margin-bottom: 18px;
+        border: 1px solid #d0d7de;
+        border-radius: 6px;
+        font-size: 15px;
+        background: #f9fafb;
+        transition: border 0.2s;
+      }
+      input[type="text"]:focus,
+      input[type="file"]:focus {
+        border: 1.5px solid #0078d4;
+        outline: none;
+        background: #fff;
+      }
+      button[type="submit"] {
+        width: 100%;
+        padding: 12px;
+        background: #0078d4;
+        color: #fff;
+        border: none;
+        border-radius: 6px;
+        font-size: 16px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: background 0.2s;
+      }
+      button[type="submit"]:hover:enabled {
+        background: #005fa3;
+      }
+      button[type="submit"]:disabled {
+        background: #b3c6d9;
+        cursor: not-allowed;
+      }
+      #loading {
+        display: none;
+        color: #0078d4;
+        text-align: center;
+        margin-top: 18px;
+        font-weight: 500;
+      }
+      #result {
+        margin-top: 18px;
+        text-align: center;
+        font-size: 15px;
+      }
+      #result.success {
+        color: #27ae60;
+      }
+      #result.error {
+        color: #e74c3c;
+      }
+      #history-container {
+        margin-top: 32px;
+      }
+      #history-table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+      #history-table th,
+      #history-table td {
+        padding: 8px;
+        border: 1px solid #e0e0e0;
+        text-align: left;
+      }
+      #history-table th {
+        background: #f2f4f8;
+      }
+      .s3-container {
+        max-width: 800px;
+        font-family: sans-serif;
+      }
+
+      .s3-row {
+        display: flex;
+        gap: 1rem;
+        margin-bottom: 8px;
+      }
+
+      .s3-label {
+        width: 150px;
+        font-weight: bold;
+      }
+
+      .s3-value {
+        flex: 1;
+        word-break: break-all;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h2>Upload File to Resource</h2>
+      <div class="s3-container">
+        <div class="s3-row">
+          <p class="s3-label">AWS s3</p>
+          <p class="s3-value">https://d1nbeuocibl1xr.cloudfront.net</p>
+        </div>
+        <div class="s3-row">
+          <p class="s3-label">Cloudflare R2</p>
+          <p class="s3-value">https://data4game.backendxgame.xyz</p>
+        </div>
+      </div>
+      <form id="uploadForm" enctype="multipart/form-data">
+        <label>
+          Version:
+          <input
+            type="text"
+            name="version"
+            id="versionInput"
+            required
+            placeholder="Nhập version"
+          />
+        </label>
+        <input type="file" name="file"  accept=".zip" required />
+        <button type="submit" id="uploadBtn">Upload</button>
+      </form>
+      <div id="loading">Đang upload...</div>
+      <div id="result"></div>
+    </div>
+    <div id="history-container" style="margin-top: 32px">
+      <h3 style="text-align: center; color: #2d3a4a">Lịch sử upload</h3>
+      <table id="history-table" style="width: 100%; border-collapse: collapse">
+        <thead>
+          <tr style="background: #f2f4f8">
+            <th style="padding: 8px; border: 1px solid #e0e0e0">Version</th>
+            <th style="padding: 8px; border: 1px solid #e0e0e0">Thời gian</th>
+            <th style="padding: 8px; border: 1px solid #e0e0e0">Trạng thái</th>
+            <th style="padding: 8px; border: 1px solid #e0e0e0">Ghi chú</th>
+            <th style="padding: 8px; border: 1px solid #e0e0e0">
+              Các file đã upload
+            </th>
+          </tr>
+        </thead>
+        <tbody id="history-body"></tbody>
+      </table>
+    </div>
+    <script>
+      async function loadHistory() {
+        try {
+          const res = await fetch("/upload-history");
+          const data = await res.json();
+          const body = document.getElementById("history-body");
+          body.innerHTML = "";
+          data
+            .slice()
+            .reverse()
+            .forEach((item) => {
+              const tr = document.createElement("tr");
+              tr.innerHTML = `
+            <td style="padding:6px;border:1px solid #e0e0e0;">${
+              item.version
+            }</td>
+            <td style="padding:6px;border:1px solid #e0e0e0;">${new Date(
+              item.time
+            ).toLocaleString()}</td>
+            <td style="padding:6px;border:1px solid #e0e0e0;color:${
+              item.status === "success"
+                ? "#27ae60"
+                : item.status === "error"
+                ? "#e74c3c"
+                : "#f39c12"
+            };">
+              ${item.status}
+            </td>
+            <td style="padding:6px;border:1px solid #e0e0e0;">${
+              item.message || ""
+            }</td>
+            <td style="padding:6px;border:1px solid #e0e0e0;max-width:200px;word-break:break-all;">
+              ${
+                Array.isArray(item.files) && item.files.length > 0
+                  ? item.files.map((f) => `<div>${f}</div>`).join("")
+                  : '<span style="color:#aaa;">-</span>'
+              }
+            </td>
+          `;
+              body.appendChild(tr);
+            });
+        } catch (e) {
+          document.getElementById("history-body").innerHTML =
+            '<tr><td colspan="5" style="color:red;">Không tải được lịch sử!</td></tr>';
+        }
+      }
+
+      document.getElementById("uploadForm").onsubmit = async function (e) {
+        e.preventDefault();
+        const version = document.getElementById("versionInput").value.trim();
+        // Chỉ cho phép chữ, số, dấu chấm, gạch dưới, gạch ngang, không dấu cách
+        if (!/^[a-zA-Z0-9._-]+$/.test(version)) {
+          document.getElementById("result").innerText =
+            "Version chỉ được chứa chữ, số, dấu chấm, gạch dưới, gạch ngang và không có dấu cách!";
+          document.getElementById("result").className = "error";
+          return;
+        }
+        document.getElementById("uploadBtn").disabled = true;
+        document.getElementById("loading").style.display = "block";
+        document.getElementById("result").innerText = "";
+        document.getElementById("result").className = "";
+        const formData = new FormData(this);
+        try {
+          const res = await fetch("/upload", {
+            method: "POST",
+            body: formData,
+          });
+          const text = await res.text();
+          document.getElementById("result").innerText = text;
+          document.getElementById("result").className = res.ok
+            ? "success"
+            : "error";
+        } catch (err) {
+          document.getElementById("result").innerText = "Có lỗi xảy ra!";
+          document.getElementById("result").className = "error";
+        }
+        document.getElementById("loading").style.display = "none";
+        document.getElementById("uploadBtn").disabled = false;
+        await loadHistory();
+      };
+
+      // Gọi khi load trang và sau khi upload xong
+      loadHistory();
+    </script>
+  </body>
+</html>

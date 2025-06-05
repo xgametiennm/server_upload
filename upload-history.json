@@ -1,0 +1,14 @@
+[
+  {
+    "version": "ios_1.0.10",
+    "time": "2025-06-05T08:25:30.347Z",
+    "status": "success",
+    "message": "Upload và giải nén thành công!",
+    "files": [
+      "ios_1.0.10/bundle-download-test (8).bundle",
+      "ios_1.0.10/cloudflare_r2_cdn_setup.txt",
+      "ios_1.0.10/cloudfront-pricing.png",
+      "ios_1.0.10/s3_cloudfront_summary.txt"
+    ]
+  }
+]
