@@ -37,6 +37,7 @@ async function uploadFolderToS3(localFolder, bucketName, s3Prefix) {
   const files = fs.readdirSync(localFolder, { withFileTypes: true });
   let uploadedFiles = [];
   for (const file of files) {
+    if (!file.isFile()) continue; 
     const localPath = path.join(localFolder, file.name);
     const s3Key = path.posix.join(s3Prefix, file.name);
     await uploadFileToS3(localPath, bucketName, s3Key);
