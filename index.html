@@ -294,7 +294,7 @@
 
           xhr.onload = async function () {
             if (xhr.status === 200) {
-              await delay(5000);
+              await delay(2000);
               await loadHistory();
               document.getElementById("result").innerText =
                 "Upload thành công!";
