@@ -144,8 +144,23 @@
             placeholder="Nhập version"
           />
         </label>
-        <input type="file" name="file"  accept=".zip" required />
+        <input type="file" name="file" accept=".zip" required />
         <button type="submit" id="uploadBtn">Upload</button>
+        <progress
+          id="progressBar"
+          value="0"
+          max="100"
+          style="width: 100%; display: none; margin-top: 12px"
+        ></progress>
+        <span
+          id="progressPercent"
+          style="
+            display: none;
+            text-align: center;
+            font-size: 14px;
+            color: #0078d4;
+          "
+        ></span>
       </form>
       <div id="loading">Đang upload...</div>
       <div id="result"></div>
@@ -213,39 +228,104 @@
             '<tr><td colspan="5" style="color:red;">Không tải được lịch sử!</td></tr>';
         }
       }
+      function delay(ms) {
+        return new Promise((resolve) => setTimeout(resolve, ms));
+      }
 
       document.getElementById("uploadForm").onsubmit = async function (e) {
         e.preventDefault();
+
         const version = document.getElementById("versionInput").value.trim();
-        // Chỉ cho phép chữ, số, dấu chấm, gạch dưới, gạch ngang, không dấu cách
+        const fileInput = this.querySelector('input[type="file"]');
+        const file = fileInput.files[0];
+
+        if (!file) {
+          document.getElementById("result").innerText =
+            "Vui lòng chọn file .zip để upload.";
+          document.getElementById("result").className = "error";
+          return;
+        }
+
+        // Validate version: chữ, số, dấu . _ -
         if (!/^[a-zA-Z0-9._-]+$/.test(version)) {
           document.getElementById("result").innerText =
             "Version chỉ được chứa chữ, số, dấu chấm, gạch dưới, gạch ngang và không có dấu cách!";
           document.getElementById("result").className = "error";
           return;
         }
+
         document.getElementById("uploadBtn").disabled = true;
         document.getElementById("loading").style.display = "block";
         document.getElementById("result").innerText = "";
         document.getElementById("result").className = "";
-        const formData = new FormData(this);
+
         try {
-          const res = await fetch("/upload", {
+          // 1. Gọi server để lấy pre-signed URL
+          const presignRes = await fetch("/get-presigned-url", {
             method: "POST",
-            body: formData,
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              filename: file.name,
+              contentType: file.type || "application/zip",
+              version: version,
+            }),
           });
-          const text = await res.text();
-          document.getElementById("result").innerText = text;
-          document.getElementById("result").className = res.ok
-            ? "success"
-            : "error";
+
+          if (!presignRes.ok) throw new Error("Không lấy được URL upload");
+
+          const { url, key } = await presignRes.json();
+
+          // 2. Upload trực tiếp lên S3 với XMLHttpRequest để theo dõi progress
+          const xhr = new XMLHttpRequest();
+          xhr.open("PUT", url);
+
+          xhr.upload.onprogress = function (e) {
+            if (e.lengthComputable) {
+              const percent = Math.round((e.loaded / e.total) * 95);
+              document.getElementById("progressBar").style.display = "block";
+              document.getElementById("progressBar").value = percent;
+              document.getElementById("progressPercent").style.display =
+                "block";
+              document.getElementById(
+                "progressPercent"
+              ).innerText = `${percent}%`;
+            }
+          };
+
+          xhr.onload = async function () {
+            if (xhr.status === 200) {
+              await delay(5000);
+              await loadHistory();
+              document.getElementById("result").innerText =
+                "Upload thành công!";
+              document.getElementById("result").className = "success";
+            } else {
+              document.getElementById("result").innerText = "Upload thất bại!";
+              document.getElementById("result").className = "error";
+            }
+            document.getElementById("loading").style.display = "none";
+            document.getElementById("uploadBtn").disabled = false;
+            document.getElementById("progressBar").style.display = "none";
+            document.getElementById("progressPercent").style.display = "none";
+          };
+
+          xhr.onerror = function (err) {
+            console.error("Upload error:", err);
+            document.getElementById("loading").style.display = "none";
+            document.getElementById("uploadBtn").disabled = false;
+            document.getElementById("result").innerText = "Lỗi khi upload!";
+            document.getElementById("result").className = "error";
+          };
+
+          xhr.setRequestHeader("Content-Type", file.type || "application/zip");
+          xhr.send(file);
         } catch (err) {
+          document.getElementById("loading").style.display = "none";
+          document.getElementById("uploadBtn").disabled = false;
           document.getElementById("result").innerText = "Có lỗi xảy ra!";
           document.getElementById("result").className = "error";
+          console.error(err);
         }
-        document.getElementById("loading").style.display = "none";
-        document.getElementById("uploadBtn").disabled = false;
-        await loadHistory();
       };
 
       // Gọi khi load trang và sau khi upload xong

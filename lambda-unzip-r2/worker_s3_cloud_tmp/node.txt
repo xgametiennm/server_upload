@@ -1,0 +1,57 @@
+[Client]
+   |
+   | Upload .zip
+   ↓
+[S3 Bucket]  ← Trigger ①
+   |
+   ├── [Lambda 1: Unzip Worker]         ← Giải nén .zip + upload từng file lên S3 (hoặc R2)
+   |
+   └── [Lambda 2: Sync Worker]          ← Đồng bộ toàn bộ file (hoặc folder) sang R2
+
+   🎯 Phân tích chi tiết:
+✅ Worker 1: Unzip Worker
+Trigger khi .zip được upload vào S3
+
+Tải .zip về (stream hoặc buffer)
+
+Giải nén (dùng adm-zip, unzipper, yauzl…)
+
+Upload từng file đã giải nén vào:
+
+S3 (theo prefix: unpacked/version/file)
+
+Hoặc R2 luôn
+
+👉 Cách này giúp bạn xử lý nội dung .zip, ví dụ asset/game map.
+
+✅ Worker 2: Sync Worker
+Trigger khi file nào đó được upload/changed ở s3://bucket/unpacked/...
+
+Mục tiêu: đồng bộ toàn bộ folder/file sang R2
+
+Hoạt động kiểu như: copy s3://... → r2://...
+
+👉 Worker này xử lý tính đồng bộ, ví dụ nếu bạn muốn có đầy đủ backup trên R2.
+
+
+--------------------------
+✅ 1. Thêm thủ công trong AWS Console (giao diện web)
+Các bước:
+Vào AWS Lambda Console
+
+Chọn hàm Lambda của bạn
+
+Chuyển đến tab Configuration
+
+Vào mục Environment variables
+
+Bấm Edit
+
+Thêm từng biến:
+Ví dụ:
+
+Key	Value
+R2_ACCESS_KEY_ID	abc123...
+R2_SECRET_ACCESS_KEY	xyz456...
+R2_ENDPOINT	https://xxxx.r2.cloudflarestorage.com
+R2_BUCKET_NAME	xgame-assets
