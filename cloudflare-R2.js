@@ -5,8 +5,9 @@ require('dotenv').config();
 
 const r2accessKeyId = process.env.R2_ACCESS_KEY_ID;
 const r2secretAccessKey = process.env.R2_SECRET_ACCESS_KEY
+const r2endpoint = process.env.R2_ENDPOINT || "https://f83d3dc6d444c3c625dbb7043045ffbf.r2.cloudflarestorage.com";
 const s3 = new AWS.S3({
-  endpoint: "https://f83d3dc6d444c3c625dbb7043045ffbf.r2.cloudflarestorage.com",
+  endpoint: r2endpoint,
   accessKeyId: r2accessKeyId,
   secretAccessKey: r2secretAccessKey,
   signatureVersion: "v4",

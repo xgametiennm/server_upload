@@ -4,11 +4,27 @@ const path = require("path");
 const fs = require("fs");
 const AdmZip = require("adm-zip");
 const AWS = require("aws-sdk");
-const { uploadFileToS3 } = require("./aws-upload");
-const { uploadFileToR2 } = require("./cloudflare-R2");
+require('dotenv').config(); 
+
+const R2_ACCESS_KEY_ID = process.env.R2_ACCESS_KEY_ID;
+const R2_SECRET_ACCESS_KEY = process.env.R2_SECRET_ACCESS_KEY;
+const R2_ENDPOINT = process.env.R2_ENDPOINT||"https://f83d3dc6d444c3c625dbb7043045ffbf.r2.cloudflarestorage.com"; // vd: "https://<accountid>.r2.cloudflarestorage.com"
+const R2_BUCKET = process.env.R2_BUCKET || "xgame-app-data";
+
+// Khởi tạo S3 client cho Cloudflare R2
+console.log("Using R2 endpoint:", R2_ENDPOINT, R2_ACCESS_KEY_ID,R2_SECRET_ACCESS_KEY);
+
+const r2 = new AWS.S3({
+  accessKeyId: R2_ACCESS_KEY_ID,
+  secretAccessKey: R2_SECRET_ACCESS_KEY,
+  endpoint: R2_ENDPOINT,
+  signatureVersion: "v4",
+  region: "auto",
+  s3ForcePathStyle: true,
+});
+
 const { log } = require("console");
 require("dotenv").config();
-const S3_BUCKET = process.env.S3_BUCKET || "xgame-app-data";
 
 const app = express();
 const HISTORY_FILE = "upload-history.json";
@@ -24,135 +40,139 @@ app.use(express.json());
 // Upload file zip trực tiếp lên S3 (không giải nén)
 app.post("/upload", upload.single("file"), async (req, res) => {
   const version = req.body.version || "default";
-  const bucketName = "xgame-app-data";
+  const bucket = req.body.bucket || "fantasy"; // hoặc lấy từ client gửi lên
+  const bucketName = R2_BUCKET;
 
+  if (!req.file) {
+    return res.status(400).send("Không có file được upload.");
+  }
+
+  // Thư mục giải nén tạm
+  const extractPath = path.join("upload", `${bucket}_${version}_${Date.now()}`);
   try {
-    if (!req.file) throw new Error("Không có file được upload.");
+    // Giải nén file zip
+    const zip = new AdmZip(req.file.path);
+    zip.extractAllTo(extractPath, true);
 
-    const fileName = req.file.originalname;
-    const s3Key = path.posix.join(version, fileName);
+    // Lấy danh sách file đã giải nén
+    const files = fs.readdirSync(extractPath, { withFileTypes: true });
+    let uploadedFiles = [];
 
-    await uploadFileToS3(req.file.path, bucketName, s3Key);
-    res.send("Upload thành công!");
+    for (const file of files) {
+      if (!file.isFile()) continue;
+      const localPath = path.join(extractPath, file.name);
+      // Key dạng: bucket/version/filename
+      const r2Key = path.posix.join(bucket, version, file.name);
+
+      await r2
+        .upload({
+          Bucket: bucketName,
+          Key: r2Key,
+          Body: fs.createReadStream(localPath),
+          ContentType: "application/octet-stream",
+        })
+        .promise();
+
+      uploadedFiles.push(r2Key);
+    }
+
+    res.send(`Upload và giải nén thành công! Đã upload: ${uploadedFiles.length} file.`);
   } catch (err) {
     res.status(500).send("Upload thất bại: " + err.message);
   } finally {
-    // Xóa file tạm sau khi upload
+    // Xóa file zip và thư mục tạm
     fs.unlink(req.file.path, () => {});
+    fs.rm(extractPath, { recursive: true, force: true }, () => {});
   }
 });
 
-app.post("/get-presigned-url", async (req, res) => {
-  console.log("Received request for presigned URL:", req.body);
-  const { filename, contentType, version } = req.body;
-  let { bucket } = req.body;
 
-  if (!filename || !version) {
-    return res.status(400).json({ error: "Missing filename hoặc version" });
-  }
-
-  // Nếu không truyền bucket prefix thì mặc định là ""
-  const bucketPrefix = bucket ? `${bucket}/` : "";
-
-  // Key sẽ là: <bucketPrefix><version>/<filename>
-  const key = `${bucketPrefix}${version}/${filename}`;
+// API xem lịch sử upload theo version và bucket prefix (Cloudflare R2)
+app.get("/upload-history", async (req, res) => {
+  // Nếu không truyền bucket và version thì lấy toàn bộ file trong bucket
+  const version = req.query.version || "";
+  const prefix = req.query.bucket ? `${req.query.bucket}/` : "";
+  const r2Bucket = R2_BUCKET;
 
   try {
-    const url = await s3.getSignedUrlPromise("putObject", {
-      Bucket: S3_BUCKET,
-      Key: key,
-      ContentType: contentType,
-      Expires: 60,
-    });
-
-    res.json({ url, key });
+    const history = await getUploadHistoryFromR2(r2Bucket, prefix, version);
+    res.json(history);
   } catch (err) {
-    res
-      .status(500)
-      .json({ error: "Không tạo được presigned URL", detail: err.message });
+    res.status(500).json({ error: "Không lấy được lịch sử upload", detail: err.message });
   }
 });
 
-// API xem lịch sử upload theo version và bucket prefix
-app.get("/upload-history", async (req, res) => {
-  const version = req.query.version || "default";
-  const prefix = req.query.bucket ? `${req.query.bucket}/` : "";
-  const s3Bucket = S3_BUCKET; // luôn là xgame-app-data
-
-  const history = await getUploadHistoryFromS3(s3Bucket, prefix, version);
-  res.json(history);
-});
-
-// Lấy danh sách file từ 1 version folder trên S3 với prefix
-async function getUploadHistoryFromS3(
+// Lấy danh sách file từ 1 version folder trên R2 với prefix
+async function getUploadHistoryFromR2(
   bucketName,
   prefix = "",
-  version = "default"
+  version = ""
 ) {
   let allFiles = [];
   let continuationToken = null;
 
+  // Nếu không truyền prefix và version thì lấy toàn bộ file trong bucket
+  let r2Prefix = "";
+  if (prefix && version) {
+    r2Prefix = `${prefix}${version}/`;
+  } else if (prefix) {
+    r2Prefix = prefix;
+  } else if (version) {
+    r2Prefix = `${version}/`;
+  } // nếu cả hai đều rỗng thì r2Prefix = ""
+
   try {
     do {
-      const data = await s3
+      console.log("Đang lấy object với Prefix:", r2Prefix);
+      const data = await r2
         .listObjectsV2({
           Bucket: bucketName,
-          Prefix: prefix ? `${prefix}` : undefined,
+          Prefix: r2Prefix || undefined, // undefined sẽ lấy tất cả
           ContinuationToken: continuationToken,
           MaxKeys: 1000,
         })
         .promise();
-      console.log(
-        `Lấy danh sách file từ bucket: ${bucketName}, prefix: ${prefix}, version: ${version}`,
-        data
-      );
-      allFiles.push(...data.Contents);
+      if (data.Contents && data.Contents.length > 0) {
+        allFiles.push(...data.Contents);
+      }
       continuationToken = data.IsTruncated ? data.NextContinuationToken : null;
     } while (continuationToken);
 
-    // Gom nhóm theo thư mục (version)
-    const versionMap = {};
+    if (allFiles.length === 0) {
+      return [];
+    }
+
+    // Gom nhóm theo folder cha (phần trước dấu / đầu tiên)
+    const folderMap = {};
 
     for (const item of allFiles) {
       const key = item.Key;
       const parts = key.split("/");
-      const ver = parts.length > 1 ? parts[1] : parts[0]; // lấy version sau prefix
+      const folder = parts[0] || "(root)";
 
-      if (!versionMap[ver]) {
-        versionMap[ver] = {
-          version: ver,
-          time: item.LastModified?.toISOString(),
-          status: "success",
-          message: "Upload và giải nén thành công!",
+      if (!folderMap[folder]) {
+        folderMap[folder] = {
+          folder: folder,
           files: [],
         };
       }
-
-      if (key !== `${prefix}${ver}/`) {
-        versionMap[ver].files.push(key);
-
-        // Nếu file này có LastModified mới hơn -> cập nhật
-        const currentLatest = new Date(versionMap[ver].time).getTime();
-        const itemTime = new Date(item.LastModified).getTime();
-        if (itemTime > currentLatest) {
-          versionMap[ver].time = item.LastModified.toISOString();
-        }
-      }
+      folderMap[folder].files.push({
+        key,
+        lastModified: item.LastModified,
+        size: item.Size,
+        status: "uploaded", // Thêm trạng thái file ở đây
+      });
     }
 
-    // Sort theo thời gian cập nhật giảm dần
-    return Object.values(versionMap).sort(
-      (a, b) => new Date(b.time) - new Date(a.time)
-    );
+    // Trả về mảng các folder, mỗi folder chứa danh sách file
+    return Object.values(folderMap);
   } catch (err) {
-    console.error("Lỗi khi lấy lịch sử upload:", err);
+    console.error("Lỗi khi lấy danh sách object:", err);
     return [
       {
-        version: "unknown",
-        time: new Date().toISOString(),
-        status: "error",
-        message: err.message,
+        folder: "unknown",
         files: [],
+        error: err.message,
       },
     ];
   }

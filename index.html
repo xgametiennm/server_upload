@@ -130,10 +130,10 @@
     <div class="container">
       <h2>Upload File to Resource</h2>
       <div class="s3-container">
-        <div class="s3-row">
+        <!-- <div class="s3-row">
           <p class="s3-label">AWS s3</p>
           <p class="s3-value">https://d2ugmvnvhgbf3.cloudfront.net</p>
-        </div>
+        </div> -->
         <div class="s3-row">
           <p class="s3-label">Cloudflare R2</p>
           <p class="s3-value">https://data4gamev2.backendxgame.xyz</p>
@@ -214,52 +214,66 @@
     </div>
     <script>
       async function loadHistory() {
-        try {
-          // Lấy giá trị bucket đang chọn để truyền lên API
-          const bucket = document.getElementById("bucketSelect").value;
-          // Có thể lấy thêm version nếu muốn lọc theo version
-          // const version = document.getElementById("versionInput").value.trim();
+  try {
+    const bucket = document.getElementById("bucketSelect").value;
+    let url = "/upload-history";
+    if (bucket) {
+      url += `?bucket=${encodeURIComponent(bucket)}`;
+    }
 
-          // Gọi API với tham số bucket (nếu có)
-          let url = "/upload-history";
-          if (bucket) {
-            url += `?bucket=${encodeURIComponent(bucket)}`;
-          }
+    const res = await fetch(url);
+    const data = await res.json();
+    const body = document.getElementById("history-body");
+    body.innerHTML = "";
 
-          const res = await fetch(url);
-          const data = await res.json();
-          const body = document.getElementById("history-body");
-          body.innerHTML = "";
-          data.forEach((item) => {
-            const tr = document.createElement("tr");
-            tr.innerHTML = `
-    <td style="padding:6px;border:1px solid #e0e0e0;">${item.version}</td>
-    <td style="padding:6px;border:1px solid #e0e0e0;">${new Date(item.time).toLocaleString()}</td>
-    <td style="padding:6px;border:1px solid #e0e0e0;color:${
-      item.status === "success"
-        ? "#27ae60"
-        : item.status === "error"
-        ? "#e74c3c"
-        : "#f39c12"
-    };">
-      ${item.status}
-    </td>
-    <td style="padding:6px;border:1px solid #e0e0e0;">${item.message || ""}</td>
-    <td style="padding:6px;border:1px solid #e0e0e0;max-width:200px;word-break:break-all;">
-      ${
-        Array.isArray(item.files) && item.files.length > 0
-          ? item.files.map((f) => `<div>${f}</div>`).join("")
-          : '<span style="color:#aaa;">-</span>'
+    if (!Array.isArray(data) || data.length === 0) {
+      body.innerHTML = '<tr><td colspan="5" style="color:#aaa;">Không có dữ liệu</td></tr>';
+      return;
+    }
+
+    // Gom nhóm theo version (bỏ tiền tố đầu)
+    const versionMap = {};
+    data.forEach(folder => {
+      if (Array.isArray(folder.files)) {
+        folder.files.forEach(file => {
+          // key dạng: bucket/version/filename
+          const parts = file.key.split("/");
+          const version = parts[1] || "(unknown)";
+          if (!versionMap[version]) versionMap[version] = [];
+          versionMap[version].push(file);
+        });
       }
-    </td>
-  `;
-            body.appendChild(tr);
-          });
-        } catch (e) {
-          document.getElementById("history-body").innerHTML =
-            '<tr><td colspan="5" style="color:red;">Không tải được lịch sử!</td></tr>';
-        }
-      }
+    });
+
+    // Hiển thị từng version
+    Object.keys(versionMap)
+      .sort((a, b) => a.localeCompare(b, undefined, { numeric: true })) // sort version giảm dần
+      .forEach(version => {
+        const trVersion = document.createElement("tr");
+        trVersion.style.background = "#f2f4f8";
+        trVersion.innerHTML = `
+          <td style="font-weight:bold;color:#0078d4;">${version}</td>
+          <td colspan="4"></td>
+        `;
+        body.appendChild(trVersion);
+
+        versionMap[version].forEach(file => {
+          const trFile = document.createElement("tr");
+          trFile.innerHTML = `
+            <td></td>
+            <td>${file.lastModified ? new Date(file.lastModified).toLocaleString() : ""}</td>
+            <td>${file.status || ""}</td>
+            <td></td>
+            <td>${file.key}</td>
+          `;
+          body.appendChild(trFile);
+        });
+      });
+  } catch (e) {
+    document.getElementById("history-body").innerHTML =
+      '<tr><td colspan="5" style="color:red;">Không tải được lịch sử!</td></tr>';
+  }
+}
       function delay(ms) {
         return new Promise((resolve) => setTimeout(resolve, ms));
       }
@@ -300,72 +314,31 @@
         document.getElementById("result").className = "";
 
         try {
-          // 1. Gọi server để lấy pre-signed URL
-          const presignRes = await fetch("/get-presigned-url", {
+          // Tạo form data để gửi lên API /upload
+          const formData = new FormData();
+          formData.append("bucket", bucket);
+          formData.append("version", version);
+          formData.append("file", file);
+
+          const res = await fetch("/upload", {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              bucket: bucket, // Thêm dòng này
-              filename: file.name,
-              contentType: file.type || "application/zip",
-              version: version,
-            }),
+            body: formData,
           });
 
-          if (!presignRes.ok) throw new Error("Không lấy được URL upload");
+          if (!res.ok) throw new Error("Upload thất bại!");
 
-          const { url, key } = await presignRes.json();
-
-          // 2. Upload trực tiếp lên S3 với XMLHttpRequest để theo dõi progress
-          const xhr = new XMLHttpRequest();
-          xhr.open("PUT", url);
-
-          xhr.upload.onprogress = function (e) {
-            if (e.lengthComputable) {
-              const percent = Math.round((e.loaded / e.total) * 95);
-              document.getElementById("progressBar").style.display = "block";
-              document.getElementById("progressBar").value = percent;
-              document.getElementById("progressPercent").style.display =
-                "block";
-              document.getElementById(
-                "progressPercent"
-              ).innerText = `${percent}%`;
-            }
-          };
-
-          xhr.onload = async function () {
-            if (xhr.status === 200) {
-              await delay(2000);
-              await loadHistory();
-              document.getElementById("result").innerText =
-                "Upload thành công!";
-              document.getElementById("result").className = "success";
-            } else {
-              document.getElementById("result").innerText = "Upload thất bại!";
-              document.getElementById("result").className = "error";
-            }
-            document.getElementById("loading").style.display = "none";
-            document.getElementById("uploadBtn").disabled = false;
-            document.getElementById("progressBar").style.display = "none";
-            document.getElementById("progressPercent").style.display = "none";
-          };
-
-          xhr.onerror = function (err) {
-            console.error("Upload error:", err);
-            document.getElementById("loading").style.display = "none";
-            document.getElementById("uploadBtn").disabled = false;
-            document.getElementById("result").innerText = "Lỗi khi upload!";
-            document.getElementById("result").className = "error";
-          };
-
-          xhr.setRequestHeader("Content-Type", file.type || "application/zip");
-          xhr.send(file);
+          await loadHistory();
+          document.getElementById("result").innerText = "Upload thành công!";
+          document.getElementById("result").className = "success";
         } catch (err) {
-          document.getElementById("loading").style.display = "none";
-          document.getElementById("uploadBtn").disabled = false;
           document.getElementById("result").innerText = "Có lỗi xảy ra!";
           document.getElementById("result").className = "error";
           console.error(err);
+        } finally {
+          document.getElementById("loading").style.display = "none";
+          document.getElementById("uploadBtn").disabled = false;
+          document.getElementById("progressBar").style.display = "none";
+          document.getElementById("progressPercent").style.display = "none";
         }
       };
 
