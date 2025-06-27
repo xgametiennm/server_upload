@@ -4,15 +4,22 @@ const path = require("path");
 const fs = require("fs");
 const AdmZip = require("adm-zip");
 const AWS = require("aws-sdk");
-require('dotenv').config(); 
+require("dotenv").config();
 
 const R2_ACCESS_KEY_ID = process.env.R2_ACCESS_KEY_ID;
 const R2_SECRET_ACCESS_KEY = process.env.R2_SECRET_ACCESS_KEY;
-const R2_ENDPOINT = process.env.R2_ENDPOINT||"https://f83d3dc6d444c3c625dbb7043045ffbf.r2.cloudflarestorage.com"; // vd: "https://<accountid>.r2.cloudflarestorage.com"
+const R2_ENDPOINT =
+  process.env.R2_ENDPOINT ||
+  "https://f83d3dc6d444c3c625dbb7043045ffbf.r2.cloudflarestorage.com"; // vd: "https://<accountid>.r2.cloudflarestorage.com"
 const R2_BUCKET = process.env.R2_BUCKET || "xgame-app-data";
 
 // Khởi tạo S3 client cho Cloudflare R2
-console.log("Using R2 endpoint:", R2_ENDPOINT, R2_ACCESS_KEY_ID,R2_SECRET_ACCESS_KEY);
+console.log(
+  "Using R2 endpoint:",
+  R2_ENDPOINT,
+  R2_ACCESS_KEY_ID,
+  R2_SECRET_ACCESS_KEY
+);
 
 const r2 = new AWS.S3({
   accessKeyId: R2_ACCESS_KEY_ID,
@@ -57,13 +64,16 @@ app.post("/upload", upload.single("file"), async (req, res) => {
     // Lấy danh sách file đã giải nén
     const files = fs.readdirSync(extractPath, { withFileTypes: true });
     let uploadedFiles = [];
+    await deleteFolder(bucketName, `${bucket}/${version}/`);
 
     for (const file of files) {
+      console.log("eeeeee", file.name);
+
       if (!file.isFile()) continue;
       const localPath = path.join(extractPath, file.name);
       // Key dạng: bucket/version/filename
       const r2Key = path.posix.join(bucket, version, file.name);
-
+      // Xóa folder cũ nếu có
       await r2
         .upload({
           Bucket: bucketName,
@@ -76,7 +86,9 @@ app.post("/upload", upload.single("file"), async (req, res) => {
       uploadedFiles.push(r2Key);
     }
 
-    res.send(`Upload và giải nén thành công! Đã upload: ${uploadedFiles.length} file.`);
+    res.send(
+      `Upload và giải nén thành công! Đã upload: ${uploadedFiles.length} file.`
+    );
   } catch (err) {
     res.status(500).send("Upload thất bại: " + err.message);
   } finally {
@@ -85,6 +97,25 @@ app.post("/upload", upload.single("file"), async (req, res) => {
     fs.rm(extractPath, { recursive: true, force: true }, () => {});
   }
 });
+
+
+async function deleteFolder(bucket, prefix) {
+  try {
+    const listedObjects = await r2.listObjectsV2({ Bucket: bucket, Prefix: prefix }).promise();
+
+    if (!listedObjects.Contents || listedObjects.Contents.length === 0) {
+      console.log("No objects found");
+      return;
+    }
+
+    for (const obj of listedObjects.Contents) {
+      await r2.deleteObject({ Bucket: bucket, Key: obj.Key }).promise();
+      console.log("Deleted:", obj.Key);
+    }
+  } catch (err) {
+    console.error("Error:", err);
+  }
+}
 
 
 // API xem lịch sử upload theo version và bucket prefix (Cloudflare R2)
@@ -98,16 +129,14 @@ app.get("/upload-history", async (req, res) => {
     const history = await getUploadHistoryFromR2(r2Bucket, prefix, version);
     res.json(history);
   } catch (err) {
-    res.status(500).json({ error: "Không lấy được lịch sử upload", detail: err.message });
+    res
+      .status(500)
+      .json({ error: "Không lấy được lịch sử upload", detail: err.message });
   }
 });
 
 // Lấy danh sách file từ 1 version folder trên R2 với prefix
-async function getUploadHistoryFromR2(
-  bucketName,
-  prefix = "",
-  version = ""
-) {
+async function getUploadHistoryFromR2(bucketName, prefix = "", version = "") {
   let allFiles = [];
   let continuationToken = null;
 
